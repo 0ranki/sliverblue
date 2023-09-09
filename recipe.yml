@@ -54,6 +54,15 @@ rpm:
   # performed via rpm-ostree during the image build, and will be pre-installed
   # at the "system level" in the final image.
   install:
+    ## Sanoid/syncoid deps
+    - perl-Config-IniFiles
+    - perl-Data-Dumper
+    - perl-Capture-Tiny
+    - perl-Getopt-Long
+    - lzop
+    - mbuffer
+    - mhash
+    - pv
     # Needed for yafti (the first boot installer). Remove if you're not using yafti.
     # - python3-pip
     # GNOME's GTK4 theme, Libadwaita. Already included in Silverblue, but not
