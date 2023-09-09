@@ -1,0 +1,166 @@
+#!/usr/bin/perl
+
+# this software is licensed for use under the Free Software Foundation's GPL v3.0 license, as retrieved
+# from http://www.gnu.org/licenses/gpl-3.0.html on 2014-11-17.  A copy should also be available in this
+# project's Git repository at https://github.com/jimsalterjrs/sanoid/blob/master/LICENSE.
+
+$::VERSION = '2.2.0';
+
+use strict;
+use warnings;
+use Getopt::Long qw(:config auto_version auto_help);
+use Pod::Usage;
+
+my $zfs = 'zfs';
+my %args = ('path' => '');
+GetOptions(\%args, "path=s") or pod2usage(2);
+
+if ($args{'path'} eq '') {
+	if (scalar(@ARGV) < 1) {
+		warn "file path missing!\n";
+		pod2usage(2);
+		exit 127;
+	} else {
+		$args{'path'} = $ARGV[0];
+	}
+}
+
+my $dataset = getdataset($args{'path'});
+
+my %versions = getversions($args{'path'}, $dataset);
+
+foreach my $version (sort { $versions{$a}{'mtime'} <=> $versions{$b}{'mtime'} } keys %versions) {
+	my $disptime = localtime($versions{$version}{'mtime'});
+	my $dispsize = humansize($versions{$version}{'size'});
+
+	print "$disptime\t$dispsize\t$version\n";
+}
+
+exit 0;
+
+###################################################################
+###################################################################
+###################################################################
+
+sub humansize {
+
+	my ($rawsize) = @_;
+	my $humansize;
+
+	if ($rawsize > 1024*1024*1024) {
+        	$humansize = sprintf("%.1f",$rawsize/1024/1024/1024) . ' GB';
+	} elsif ($rawsize > 1024*1024) {
+        	$humansize = sprintf("%.1f",$rawsize/1024/1024) . ' MB';
+	} elsif ($rawsize > 255) {
+        	$humansize = sprintf("%.1f",$rawsize/1024) . ' KB';
+	} else {
+		$humansize = $rawsize . ' Bytes';
+	}
+
+	return $humansize;
+}
+
+sub getversions {
+	my ($path, $dataset) = @_;
+	my @snaps = findsnaps($dataset, $args{'path'});
+
+	my $snappath = '.zfs/snapshot';
+	my $relpath = $path;
+	$relpath =~ s/^$dataset\///;
+
+	my %versions;
+
+	foreach my $snap (@snaps) {
+		my $filename = "$dataset/$snappath/$snap/$relpath";
+		my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$blocks) = stat($filename);
+
+		if (!defined $size) {
+			next;
+		}
+
+		# only push to the $versions hash if this size and mtime aren't already present (simple dedupe)
+		my $duplicate = 0;
+		foreach my $version (keys %versions) {
+			if ($versions{$version}{'size'} eq $size && $versions{$version}{'mtime'} eq $mtime) {
+				$duplicate = 1;
+			}
+		}
+		if (! $duplicate) {
+			$versions{$filename}{'size'} = $size;
+			$versions{$filename}{'mtime'} = $mtime;
+		}
+	}
+
+	my $filename = "$dataset/$relpath";
+	my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$blocks) = stat($filename);
+
+	if (defined $size) {
+		$versions{$filename}{'size'} = $size;
+		$versions{$filename}{'mtime'} = $mtime;
+	}
+
+	return %versions;
+}
+
+sub findsnaps {
+	my ($dataset, $path) = @_;
+
+	my $snappath = '.zfs/snapshot';
+
+	my $relpath = $path;
+	$relpath =~ s/^$dataset//;
+
+	my @snaps;
+	opendir (my $dh, "$dataset/$snappath");
+	while (my $dir=(readdir $dh)) {
+		if ($dir ne '.' && $dir ne '..') { push @snaps, $dir; }
+	}
+	closedir $dh;
+
+	return @snaps;
+}
+
+sub getdataset {
+
+	my ($path) = @_;
+
+	open FH, "$zfs list -H -t filesystem -o mountpoint,mounted |";
+	my @datasets = <FH>;
+	close FH;
+
+	my @matchingdatasets;
+	foreach my $dataset (@datasets) {
+		chomp $dataset;
+		my ($mountpoint, $mounted) = ($dataset =~ m/([^\t]*)\t*(.*)/);
+		if ($mounted ne "yes") {
+			next;
+		}
+
+		if ( $path =~ /^$mountpoint/ ) { push @matchingdatasets, $mountpoint; }
+	}
+
+	my $bestmatch = '';
+	foreach my $dataset (@matchingdatasets) {
+		if ( length $dataset > length $bestmatch ) { $bestmatch = $dataset; }
+	}
+	return $bestmatch;
+}
+
+__END__
+
+=head1 NAME
+
+findoid - ZFS file version listing tool
+
+=head1 SYNOPSIS
+
+ findoid [options] FILE
+
+ FILE                	local path to file for version listing
+
+Options:
+
+  --path=FILE         	alternative to specify file path to list versions for
+
+  --help                Prints this helptext
+  --version             Prints the version number
